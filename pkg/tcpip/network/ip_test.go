@@ -167,7 +167,7 @@ func (*testObject) Wait() {}
 // WritePacket is called by network endpoints after producing a packet and
 // writing it to the link endpoint. This is used by the test object to verify
 // that the produced packet is as expected.
-func (t *testObject) WritePacket(_ *stack.Route, _ *stack.GSO, protocol tcpip.NetworkProtocolNumber, pkt *stack.PacketBuffer) *tcpip.Error {
+func (t *testObject) WritePacket(_ *stack.Route, _ *stack.GSO, protocol tcpip.NetworkProtocolNumber, pkt *stack.PacketBuffer) tcpip.Error {
 	var prot tcpip.TransportProtocolNumber
 	var srcAddr tcpip.Address
 	var dstAddr tcpip.Address
@@ -189,7 +189,7 @@ func (t *testObject) WritePacket(_ *stack.Route, _ *stack.GSO, protocol tcpip.Ne
 }
 
 // WritePackets implements stack.LinkEndpoint.WritePackets.
-func (*testObject) WritePackets(_ *stack.Route, _ *stack.GSO, pkt stack.PacketBufferList, protocol tcpip.NetworkProtocolNumber) (int, *tcpip.Error) {
+func (*testObject) WritePackets(_ *stack.Route, _ *stack.GSO, pkt stack.PacketBufferList, protocol tcpip.NetworkProtocolNumber) (int, tcpip.Error) {
 	panic("not implemented")
 }
 
@@ -203,7 +203,7 @@ func (*testObject) AddHeader(local, remote tcpip.LinkAddress, protocol tcpip.Net
 	panic("not implemented")
 }
 
-func buildIPv4Route(local, remote tcpip.Address) (*stack.Route, *tcpip.Error) {
+func buildIPv4Route(local, remote tcpip.Address) (*stack.Route, tcpip.Error) {
 	s := stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol},
 		TransportProtocols: []stack.TransportProtocolFactory{udp.NewProtocol, tcp.NewProtocol},
@@ -219,7 +219,7 @@ func buildIPv4Route(local, remote tcpip.Address) (*stack.Route, *tcpip.Error) {
 	return s.FindRoute(nicID, local, remote, ipv4.ProtocolNumber, false /* multicastLoop */)
 }
 
-func buildIPv6Route(local, remote tcpip.Address) (*stack.Route, *tcpip.Error) {
+func buildIPv6Route(local, remote tcpip.Address) (*stack.Route, tcpip.Error) {
 	s := stack.New(stack.Options{
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv6.NewProtocol},
 		TransportProtocols: []stack.TransportProtocolFactory{udp.NewProtocol, tcp.NewProtocol},
@@ -306,8 +306,8 @@ func (t *testInterface) setEnabled(v bool) {
 	t.mu.disabled = !v
 }
 
-func (*testInterface) WritePacketToRemote(tcpip.LinkAddress, *stack.GSO, tcpip.NetworkProtocolNumber, *stack.PacketBuffer) *tcpip.Error {
-	return tcpip.ErrNotSupported
+func (*testInterface) WritePacketToRemote(tcpip.LinkAddress, *stack.GSO, tcpip.NetworkProtocolNumber, *stack.PacketBuffer) tcpip.Error {
+	return &tcpip.ErrNotSupported{}
 }
 
 func TestSourceAddressValidation(t *testing.T) {
@@ -479,8 +479,9 @@ func TestEnableWhenNICDisabled(t *testing.T) {
 			// Attempting to enable the endpoint while the NIC is disabled should
 			// fail.
 			nic.setEnabled(false)
-			if err := ep.Enable(); err != tcpip.ErrNotPermitted {
-				t.Fatalf("got ep.Enable() = %s, want = %s", err, tcpip.ErrNotPermitted)
+			err := ep.Enable()
+			if _, ok := err.(*tcpip.ErrNotPermitted); !ok {
+				t.Fatalf("got ep.Enable() = %s, want = %s", err, &tcpip.ErrNotPermitted{})
 			}
 			// ep should consider the NIC's enabled status when determining its own
 			// enabled status so we "enable" the NIC to read just the endpoint's
@@ -1122,7 +1123,7 @@ func TestWriteHeaderIncludedPacket(t *testing.T) {
 		remoteAddr   tcpip.Address
 		pktGen       func(*testing.T, tcpip.Address) buffer.VectorisedView
 		checker      func(*testing.T, *stack.PacketBuffer, tcpip.Address)
-		expectedErr  *tcpip.Error
+		expectedErr  func(tcpip.Error) tcpip.Error
 	}{
 		{
 			name:         "IPv4",
@@ -1187,7 +1188,12 @@ func TestWriteHeaderIncludedPacket(t *testing.T) {
 				ip.SetHeaderLength(header.IPv4MinimumSize - 1)
 				return hdr.View().ToVectorisedView()
 			},
-			expectedErr: tcpip.ErrMalformedHeader,
+			expectedErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrMalformedHeader); ok {
+					return nil
+				}
+				return &tcpip.ErrMalformedHeader{}
+			},
 		},
 		{
 			name:         "IPv4 too small",
@@ -1205,7 +1211,12 @@ func TestWriteHeaderIncludedPacket(t *testing.T) {
 				})
 				return buffer.View(ip[:len(ip)-1]).ToVectorisedView()
 			},
-			expectedErr: tcpip.ErrMalformedHeader,
+			expectedErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrMalformedHeader); ok {
+					return nil
+				}
+				return &tcpip.ErrMalformedHeader{}
+			},
 		},
 		{
 			name:         "IPv4 minimum size",
@@ -1465,7 +1476,12 @@ func TestWriteHeaderIncludedPacket(t *testing.T) {
 				})
 				return buffer.View(ip[:len(ip)-1]).ToVectorisedView()
 			},
-			expectedErr: tcpip.ErrMalformedHeader,
+			expectedErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrMalformedHeader); ok {
+					return nil
+				}
+				return &tcpip.ErrMalformedHeader{}
+			},
 		},
 	}
 
@@ -1506,10 +1522,17 @@ func TestWriteHeaderIncludedPacket(t *testing.T) {
 					}
 					defer r.Release()
 
-					if err := r.WriteHeaderIncludedPacket(stack.NewPacketBuffer(stack.PacketBufferOptions{
-						Data: test.pktGen(t, subTest.srcAddr),
-					})); err != test.expectedErr {
-						t.Fatalf("got r.WriteHeaderIncludedPacket(_) = %s, want = %s", err, test.expectedErr)
+					{
+						err := r.WriteHeaderIncludedPacket(stack.NewPacketBuffer(stack.PacketBufferOptions{
+							Data: test.pktGen(t, subTest.srcAddr),
+						}))
+						if fn := test.expectedErr; fn != nil {
+							if want := fn(err); want != nil {
+								t.Fatalf("got r.WriteHeaderIncludedPacket(_) = %s, want = %s", err, want)
+							}
+						} else if err != nil {
+							t.Fatalf("got r.WriteHeaderIncludedPacket(_) = %s, want = nil", err)
+						}
 					}
 
 					if test.expectedErr != nil {

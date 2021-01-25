@@ -50,137 +50,222 @@ const ipv4AddressSize = 4
 // Error represents an error in the netstack error space. Using a special type
 // ensures that errors outside of this space are not accidentally introduced.
 //
-// All errors must have unique msg strings.
-//
 // +stateify savable
-type Error struct {
-	msg string
-
-	ignoreStats bool
-}
-
-// String implements fmt.Stringer.String.
-func (e *Error) String() string {
-	if e == nil {
-		return "<nil>"
-	}
-	return e.msg
+type Error interface {
+	fmt.Stringer
 }
 
 // IgnoreStats indicates whether this error type should be included in failure
 // counts in tcpip.Stats structs.
-func (e *Error) IgnoreStats() bool {
-	return e.ignoreStats
+type IgnoreStats interface {
+	isIgnoreStats()
 }
 
-// Errors that can be returned by the network stack.
-var (
-	ErrUnknownProtocol           = &Error{msg: "unknown protocol"}
-	ErrUnknownNICID              = &Error{msg: "unknown nic id"}
-	ErrUnknownDevice             = &Error{msg: "unknown device"}
-	ErrUnknownProtocolOption     = &Error{msg: "unknown option for protocol"}
-	ErrDuplicateNICID            = &Error{msg: "duplicate nic id"}
-	ErrDuplicateAddress          = &Error{msg: "duplicate address"}
-	ErrNoRoute                   = &Error{msg: "no route"}
-	ErrBadLinkEndpoint           = &Error{msg: "bad link layer endpoint"}
-	ErrAlreadyBound              = &Error{msg: "endpoint already bound", ignoreStats: true}
-	ErrInvalidEndpointState      = &Error{msg: "endpoint is in invalid state"}
-	ErrAlreadyConnecting         = &Error{msg: "endpoint is already connecting", ignoreStats: true}
-	ErrAlreadyConnected          = &Error{msg: "endpoint is already connected", ignoreStats: true}
-	ErrNoPortAvailable           = &Error{msg: "no ports are available"}
-	ErrPortInUse                 = &Error{msg: "port is in use"}
-	ErrBadLocalAddress           = &Error{msg: "bad local address"}
-	ErrClosedForSend             = &Error{msg: "endpoint is closed for send"}
-	ErrClosedForReceive          = &Error{msg: "endpoint is closed for receive"}
-	ErrWouldBlock                = &Error{msg: "operation would block", ignoreStats: true}
-	ErrConnectionRefused         = &Error{msg: "connection was refused"}
-	ErrTimeout                   = &Error{msg: "operation timed out"}
-	ErrAborted                   = &Error{msg: "operation aborted"}
-	ErrConnectStarted            = &Error{msg: "connection attempt started", ignoreStats: true}
-	ErrDestinationRequired       = &Error{msg: "destination address is required"}
-	ErrNotSupported              = &Error{msg: "operation not supported"}
-	ErrQueueSizeNotSupported     = &Error{msg: "queue size querying not supported"}
-	ErrNotConnected              = &Error{msg: "endpoint not connected"}
-	ErrConnectionReset           = &Error{msg: "connection reset by peer"}
-	ErrConnectionAborted         = &Error{msg: "connection aborted"}
-	ErrNoSuchFile                = &Error{msg: "no such file"}
-	ErrInvalidOptionValue        = &Error{msg: "invalid option value specified"}
-	ErrBadAddress                = &Error{msg: "bad address"}
-	ErrNetworkUnreachable        = &Error{msg: "network is unreachable"}
-	ErrMessageTooLong            = &Error{msg: "message too long"}
-	ErrNoBufferSpace             = &Error{msg: "no buffer space available"}
-	ErrBroadcastDisabled         = &Error{msg: "broadcast socket option disabled"}
-	ErrNotPermitted              = &Error{msg: "operation not permitted"}
-	ErrAddressFamilyNotSupported = &Error{msg: "address family not supported by protocol"}
-	ErrMalformedHeader           = &Error{msg: "header is malformed"}
-	ErrBadBuffer                 = &Error{msg: "bad buffer"}
-)
+// ErrAborted indicates the operation was aborted.
+type ErrAborted struct{}
 
-var messageToError map[string]*Error
-
-var populate sync.Once
-
-// StringToError converts an error message to the error.
-func StringToError(s string) *Error {
-	populate.Do(func() {
-		var errors = []*Error{
-			ErrUnknownProtocol,
-			ErrUnknownNICID,
-			ErrUnknownDevice,
-			ErrUnknownProtocolOption,
-			ErrDuplicateNICID,
-			ErrDuplicateAddress,
-			ErrNoRoute,
-			ErrBadLinkEndpoint,
-			ErrAlreadyBound,
-			ErrInvalidEndpointState,
-			ErrAlreadyConnecting,
-			ErrAlreadyConnected,
-			ErrNoPortAvailable,
-			ErrPortInUse,
-			ErrBadLocalAddress,
-			ErrClosedForSend,
-			ErrClosedForReceive,
-			ErrWouldBlock,
-			ErrConnectionRefused,
-			ErrTimeout,
-			ErrAborted,
-			ErrConnectStarted,
-			ErrDestinationRequired,
-			ErrNotSupported,
-			ErrQueueSizeNotSupported,
-			ErrNotConnected,
-			ErrConnectionReset,
-			ErrConnectionAborted,
-			ErrNoSuchFile,
-			ErrInvalidOptionValue,
-			ErrBadAddress,
-			ErrNetworkUnreachable,
-			ErrMessageTooLong,
-			ErrNoBufferSpace,
-			ErrBroadcastDisabled,
-			ErrNotPermitted,
-			ErrAddressFamilyNotSupported,
-			ErrMalformedHeader,
-			ErrBadBuffer,
-		}
-
-		messageToError = make(map[string]*Error)
-		for _, e := range errors {
-			if messageToError[e.String()] != nil {
-				panic("tcpip errors with duplicated message: " + e.String())
-			}
-			messageToError[e.String()] = e
-		}
-	})
-
-	e, ok := messageToError[s]
-	if !ok {
-		panic("unknown error message: " + s)
-	}
-
-	return e
+func (*ErrAborted) String() string {
+	return "operation aborted"
 }
+
+// ErrAddressFamilyNotSupported indicates the operation does not support the
+// given address family.
+type ErrAddressFamilyNotSupported struct{}
+
+func (*ErrAddressFamilyNotSupported) String() string {
+	return "address family not supported by protocol"
+}
+
+// ErrAlreadyBound indicates the endpoint is already bound.
+type ErrAlreadyBound struct{}
+
+func (*ErrAlreadyBound) String() string { return "endpoint already bound" }
+func (*ErrAlreadyBound) isIgnoreStats() {}
+
+// ErrAlreadyConnected indicates the endpoint is already connected.
+type ErrAlreadyConnected struct{}
+
+func (*ErrAlreadyConnected) String() string { return "endpoint is already connected" }
+func (*ErrAlreadyConnected) isIgnoreStats() {}
+
+// ErrAlreadyConnecting indicates the endpoint is already connecting.
+type ErrAlreadyConnecting struct{}
+
+func (*ErrAlreadyConnecting) String() string { return "endpoint is already connecting" }
+func (*ErrAlreadyConnecting) isIgnoreStats() {}
+
+// ErrBadAddress indicates a bad address was provided.
+type ErrBadAddress struct{}
+
+func (*ErrBadAddress) String() string { return "bad address" }
+
+// ErrBadBuffer indicates a bad buffer was provided.
+type ErrBadBuffer struct{}
+
+func (*ErrBadBuffer) String() string { return "bad buffer" }
+
+// ErrBadLocalAddress indicates a bad local address was provided.
+type ErrBadLocalAddress struct{}
+
+func (*ErrBadLocalAddress) String() string { return "bad local address" }
+
+// ErrBroadcastDisabled indicates broadcast is not enabled on the endpoint.
+type ErrBroadcastDisabled struct{}
+
+func (*ErrBroadcastDisabled) String() string { return "broadcast socket option disabled" }
+
+// ErrClosedForReceive indicates the endpoint is closed for incoming data.
+type ErrClosedForReceive struct{}
+
+func (*ErrClosedForReceive) String() string { return "endpoint is closed for receive" }
+
+// ErrClosedForSend indicates the endpoint is closed for outgoing data.
+type ErrClosedForSend struct{}
+
+func (*ErrClosedForSend) String() string { return "endpoint is closed for send" }
+
+// ErrConnectStarted indicates the endpoint is connecting asynchronously.
+type ErrConnectStarted struct{}
+
+func (*ErrConnectStarted) String() string { return "connection attempt started" }
+func (*ErrConnectStarted) isIgnoreStats() {}
+
+// ErrConnectionAborted indicates the connection was aborted.
+type ErrConnectionAborted struct{}
+
+func (*ErrConnectionAborted) String() string { return "connection aborted" }
+
+// ErrConnectionRefused indicates the connection was refused.
+type ErrConnectionRefused struct{}
+
+func (*ErrConnectionRefused) String() string { return "connection was refused" }
+
+// ErrConnectionReset indicates the connection was reset.
+type ErrConnectionReset struct{}
+
+func (*ErrConnectionReset) String() string { return "connection reset by peer" }
+
+// ErrDestinationRequired indicates the operation requires a destination
+// address, and one was not provided.
+type ErrDestinationRequired struct{}
+
+func (*ErrDestinationRequired) String() string { return "destination address is required" }
+
+// ErrDuplicateAddress indicates the operation encountered a duplicate address.
+type ErrDuplicateAddress struct{}
+
+func (*ErrDuplicateAddress) String() string { return "duplicate address" }
+
+// ErrDuplicateNICID indicates the operation encountered a duplicate NIC ID.
+type ErrDuplicateNICID struct{}
+
+func (*ErrDuplicateNICID) String() string { return "duplicate nic id" }
+
+// ErrInvalidEndpointState indicates the endpoint is in an invalid state.
+type ErrInvalidEndpointState struct{}
+
+func (*ErrInvalidEndpointState) String() string { return "endpoint is in invalid state" }
+
+// ErrInvalidOptionValue indicates an invalid option value was provided.
+type ErrInvalidOptionValue struct{}
+
+func (*ErrInvalidOptionValue) String() string { return "invalid option value specified" }
+
+// ErrMalformedHeader indicates the operation encountered a malformed header.
+type ErrMalformedHeader struct{}
+
+func (*ErrMalformedHeader) String() string { return "header is malformed" }
+
+// ErrMessageTooLong indicates the operation encountered a message whose length
+// exceeds the maximum permitted.
+type ErrMessageTooLong struct{}
+
+func (*ErrMessageTooLong) String() string { return "message too long" }
+
+// ErrNetworkUnreachable indicates the operation is not able to reach the
+// destination network.
+type ErrNetworkUnreachable struct{}
+
+func (*ErrNetworkUnreachable) String() string { return "network is unreachable" }
+
+// ErrNoBufferSpace indicates no buffer space is available.
+type ErrNoBufferSpace struct{}
+
+func (*ErrNoBufferSpace) String() string { return "no buffer space available" }
+
+// ErrNoPortAvailable indicates no port could be allocated for the operation.
+type ErrNoPortAvailable struct{}
+
+func (*ErrNoPortAvailable) String() string { return "no ports are available" }
+
+// ErrNoRoute indicates the operation is not able to find a route to the
+// destination.
+type ErrNoRoute struct{}
+
+func (*ErrNoRoute) String() string { return "no route" }
+
+// ErrNoSuchFile is used to indicate that ENOENT should be returned the to
+// calling application.
+type ErrNoSuchFile struct{}
+
+func (*ErrNoSuchFile) String() string { return "no such file" }
+
+// ErrNotConnected indicates the endpoint is not connected.
+type ErrNotConnected struct{}
+
+func (*ErrNotConnected) String() string { return "endpoint not connected" }
+
+// ErrNotPermitted indicates the operation is not permitted.
+type ErrNotPermitted struct{}
+
+func (*ErrNotPermitted) String() string { return "operation not permitted" }
+
+// ErrNotSupported indicates the operation is not supported.
+type ErrNotSupported struct{}
+
+func (*ErrNotSupported) String() string { return "operation not supported" }
+
+// ErrPortInUse indicates the provided port is in use.
+type ErrPortInUse struct{}
+
+func (*ErrPortInUse) String() string { return "port is in use" }
+
+// ErrQueueSizeNotSupported indicates the endpoint does not allow queue size
+// operation.
+type ErrQueueSizeNotSupported struct{}
+
+func (*ErrQueueSizeNotSupported) String() string { return "queue size querying not supported" }
+
+// ErrTimeout indicates the operation timed out.
+type ErrTimeout struct{}
+
+func (*ErrTimeout) String() string { return "operation timed out" }
+
+// ErrUnknownDevice indicates an unknown device identifier was provided.
+type ErrUnknownDevice struct{}
+
+func (*ErrUnknownDevice) String() string { return "unknown device" }
+
+// ErrUnknownNICID indicates an unknown NIC ID was provided.
+type ErrUnknownNICID struct{}
+
+func (*ErrUnknownNICID) String() string { return "unknown nic id" }
+
+// ErrUnknownProtocol indicates an unknown protocol was requested.
+type ErrUnknownProtocol struct{}
+
+func (*ErrUnknownProtocol) String() string { return "unknown protocol" }
+
+// ErrUnknownProtocolOption indicates an unknown protocol option was provided.
+type ErrUnknownProtocolOption struct{}
+
+func (*ErrUnknownProtocolOption) String() string { return "unknown option for protocol" }
+
+// ErrWouldBlock indicates the operation would block.
+type ErrWouldBlock struct{}
+
+func (*ErrWouldBlock) String() string { return "operation would block" }
+func (*ErrWouldBlock) isIgnoreStats() {}
 
 // Errors related to Subnet
 var (
@@ -633,7 +718,7 @@ type Endpoint interface {
 	// If non-zero number of bytes are successfully read and written to dst, err
 	// must be nil. Otherwise, if dst failed to write anything, ErrBadBuffer
 	// should be returned.
-	Read(dst io.Writer, opts ReadOptions) (res ReadResult, err *Error)
+	Read(io.Writer, ReadOptions) (ReadResult, Error)
 
 	// Write writes data to the endpoint's peer. This method does not block if
 	// the data cannot be written.
@@ -648,7 +733,7 @@ type Endpoint interface {
 	// stream (TCP) Endpoints may return partial writes, and even then only
 	// in the case where writing additional data would block. Other Endpoints
 	// will either write the entire message or return an error.
-	Write(Payloader, WriteOptions) (int64, *Error)
+	Write(Payloader, WriteOptions) (int64, Error)
 
 	// Connect connects the endpoint to its peer. Specifying a NIC is
 	// optional.
@@ -665,18 +750,18 @@ type Endpoint interface {
 	// If address.Addr is empty, this means that Enpoint has to be
 	// disconnected if this is supported, otherwise
 	// ErrAddressFamilyNotSupported must be returned.
-	Connect(address FullAddress) *Error
+	Connect(address FullAddress) Error
 
 	// Disconnect disconnects the endpoint from its peer.
-	Disconnect() *Error
+	Disconnect() Error
 
 	// Shutdown closes the read and/or write end of the endpoint connection
 	// to its peer.
-	Shutdown(flags ShutdownFlags) *Error
+	Shutdown(flags ShutdownFlags) Error
 
 	// Listen puts the endpoint in "listen" mode, which allows it to accept
 	// new connections.
-	Listen(backlog int) *Error
+	Listen(backlog int) Error
 
 	// Accept returns a new endpoint if a peer has established a connection
 	// to an endpoint previously set to listen mode. This method does not
@@ -686,36 +771,36 @@ type Endpoint interface {
 	//
 	// If peerAddr is not nil then it is populated with the peer address of the
 	// returned endpoint.
-	Accept(peerAddr *FullAddress) (Endpoint, *waiter.Queue, *Error)
+	Accept(peerAddr *FullAddress) (Endpoint, *waiter.Queue, Error)
 
 	// Bind binds the endpoint to a specific local address and port.
 	// Specifying a NIC is optional.
-	Bind(address FullAddress) *Error
+	Bind(address FullAddress) Error
 
 	// GetLocalAddress returns the address to which the endpoint is bound.
-	GetLocalAddress() (FullAddress, *Error)
+	GetLocalAddress() (FullAddress, Error)
 
 	// GetRemoteAddress returns the address to which the endpoint is
 	// connected.
-	GetRemoteAddress() (FullAddress, *Error)
+	GetRemoteAddress() (FullAddress, Error)
 
 	// Readiness returns the current readiness of the endpoint. For example,
 	// if waiter.EventIn is set, the endpoint is immediately readable.
 	Readiness(mask waiter.EventMask) waiter.EventMask
 
 	// SetSockOpt sets a socket option.
-	SetSockOpt(opt SettableSocketOption) *Error
+	SetSockOpt(opt SettableSocketOption) Error
 
 	// SetSockOptInt sets a socket option, for simple cases where a value
 	// has the int type.
-	SetSockOptInt(opt SockOptInt, v int) *Error
+	SetSockOptInt(opt SockOptInt, v int) Error
 
 	// GetSockOpt gets a socket option.
-	GetSockOpt(opt GettableSocketOption) *Error
+	GetSockOpt(opt GettableSocketOption) Error
 
 	// GetSockOptInt gets a socket option for simple cases where a return
 	// value has the int type.
-	GetSockOptInt(SockOptInt) (int, *Error)
+	GetSockOptInt(SockOptInt) (int, Error)
 
 	// State returns a socket's lifecycle state. The returned value is
 	// protocol-specific and is primarily used for diagnostics.
@@ -738,7 +823,7 @@ type Endpoint interface {
 	SetOwner(owner PacketOwner)
 
 	// LastError clears and returns the last error reported by the endpoint.
-	LastError() *Error
+	LastError() Error
 
 	// SocketOptions returns the structure which contains all the socket
 	// level options.

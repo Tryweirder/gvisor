@@ -81,7 +81,7 @@ func TestLocalPing(t *testing.T) {
 		linkEndpoint       func() stack.LinkEndpoint
 		localAddr          tcpip.Address
 		icmpBuf            func(*testing.T) buffer.View
-		expectedConnectErr *tcpip.Error
+		expectedConnectErr func(tcpip.Error) tcpip.Error
 		checkLinkEndpoint  func(t *testing.T, e stack.LinkEndpoint)
 	}{
 		{
@@ -121,40 +121,60 @@ func TestLocalPing(t *testing.T) {
 			checkLinkEndpoint: channelEPCheck,
 		},
 		{
-			name:               "IPv4 loopback without local address",
-			transProto:         icmp.ProtocolNumber4,
-			netProto:           ipv4.ProtocolNumber,
-			linkEndpoint:       loopback.New,
-			icmpBuf:            ipv4ICMPBuf,
-			expectedConnectErr: tcpip.ErrNoRoute,
-			checkLinkEndpoint:  func(*testing.T, stack.LinkEndpoint) {},
+			name:         "IPv4 loopback without local address",
+			transProto:   icmp.ProtocolNumber4,
+			netProto:     ipv4.ProtocolNumber,
+			linkEndpoint: loopback.New,
+			icmpBuf:      ipv4ICMPBuf,
+			expectedConnectErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrNoRoute); ok {
+					return nil
+				}
+				return &tcpip.ErrNoRoute{}
+			},
+			checkLinkEndpoint: func(*testing.T, stack.LinkEndpoint) {},
 		},
 		{
-			name:               "IPv6 loopback without local address",
-			transProto:         icmp.ProtocolNumber6,
-			netProto:           ipv6.ProtocolNumber,
-			linkEndpoint:       loopback.New,
-			icmpBuf:            ipv6ICMPBuf,
-			expectedConnectErr: tcpip.ErrNoRoute,
-			checkLinkEndpoint:  func(*testing.T, stack.LinkEndpoint) {},
+			name:         "IPv6 loopback without local address",
+			transProto:   icmp.ProtocolNumber6,
+			netProto:     ipv6.ProtocolNumber,
+			linkEndpoint: loopback.New,
+			icmpBuf:      ipv6ICMPBuf,
+			expectedConnectErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrNoRoute); ok {
+					return nil
+				}
+				return &tcpip.ErrNoRoute{}
+			},
+			checkLinkEndpoint: func(*testing.T, stack.LinkEndpoint) {},
 		},
 		{
-			name:               "IPv4 non-loopback without local address",
-			transProto:         icmp.ProtocolNumber4,
-			netProto:           ipv4.ProtocolNumber,
-			linkEndpoint:       channelEP,
-			icmpBuf:            ipv4ICMPBuf,
-			expectedConnectErr: tcpip.ErrNoRoute,
-			checkLinkEndpoint:  channelEPCheck,
+			name:         "IPv4 non-loopback without local address",
+			transProto:   icmp.ProtocolNumber4,
+			netProto:     ipv4.ProtocolNumber,
+			linkEndpoint: channelEP,
+			icmpBuf:      ipv4ICMPBuf,
+			expectedConnectErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrNoRoute); ok {
+					return nil
+				}
+				return &tcpip.ErrNoRoute{}
+			},
+			checkLinkEndpoint: channelEPCheck,
 		},
 		{
-			name:               "IPv6 non-loopback without local address",
-			transProto:         icmp.ProtocolNumber6,
-			netProto:           ipv6.ProtocolNumber,
-			linkEndpoint:       channelEP,
-			icmpBuf:            ipv6ICMPBuf,
-			expectedConnectErr: tcpip.ErrNoRoute,
-			checkLinkEndpoint:  channelEPCheck,
+			name:         "IPv6 non-loopback without local address",
+			transProto:   icmp.ProtocolNumber6,
+			netProto:     ipv6.ProtocolNumber,
+			linkEndpoint: channelEP,
+			icmpBuf:      ipv6ICMPBuf,
+			expectedConnectErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrNoRoute); ok {
+					return nil
+				}
+				return &tcpip.ErrNoRoute{}
+			},
+			checkLinkEndpoint: channelEPCheck,
 		},
 	}
 
@@ -186,8 +206,15 @@ func TestLocalPing(t *testing.T) {
 			defer ep.Close()
 
 			connAddr := tcpip.FullAddress{Addr: test.localAddr}
-			if err := ep.Connect(connAddr); err != test.expectedConnectErr {
-				t.Fatalf("got ep.Connect(%#v) = %s, want = %s", connAddr, err, test.expectedConnectErr)
+			{
+				err := ep.Connect(connAddr)
+				if fn := test.expectedConnectErr; fn != nil {
+					if want := fn(err); want != nil {
+						t.Fatalf("got ep.Connect(%#v) = %s, want = %s", connAddr, err, want)
+					}
+				} else if err != nil {
+					t.Fatalf("got ep.Connect(%#v) = %s, want = nil", connAddr, err)
+				}
 			}
 
 			if test.expectedConnectErr != nil {
@@ -263,12 +290,12 @@ func TestLocalUDP(t *testing.T) {
 	subTests := []struct {
 		name             string
 		addAddress       bool
-		expectedWriteErr *tcpip.Error
+		expectedWriteErr tcpip.Error
 	}{
 		{
 			name:             "Unassigned local address",
 			addAddress:       false,
-			expectedWriteErr: tcpip.ErrNoRoute,
+			expectedWriteErr: &tcpip.ErrNoRoute{},
 		},
 		{
 			name:             "Assigned local address",

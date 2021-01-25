@@ -78,8 +78,11 @@ func TestExcludeBroadcast(t *testing.T) {
 		defer ep.Close()
 
 		// Cannot connect using a broadcast address as the source.
-		if err := ep.Connect(randomAddr); err != tcpip.ErrNoRoute {
-			t.Errorf("got ep.Connect(...) = %v, want = %v", err, tcpip.ErrNoRoute)
+		{
+			err := ep.Connect(randomAddr)
+			if _, ok := err.(*tcpip.ErrNoRoute); !ok {
+				t.Errorf("got ep.Connect(...) = %v, want = %v", err, &tcpip.ErrNoRoute{})
+			}
 		}
 
 		// However, we can bind to a broadcast address to listen.
@@ -1376,8 +1379,8 @@ func TestFragmentationErrors(t *testing.T) {
 		payloadSize           int
 		allowPackets          int
 		outgoingErrors        int
-		mockError             *tcpip.Error
-		wantError             *tcpip.Error
+		mockError             tcpip.Error
+		wantError             func(tcpip.Error) tcpip.Error
 	}{
 		{
 			description:           "No frag",
@@ -1386,8 +1389,13 @@ func TestFragmentationErrors(t *testing.T) {
 			transportHeaderLength: 0,
 			allowPackets:          0,
 			outgoingErrors:        1,
-			mockError:             tcpip.ErrAborted,
-			wantError:             tcpip.ErrAborted,
+			mockError:             &tcpip.ErrAborted{},
+			wantError: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrAborted); ok {
+					return nil
+				}
+				return &tcpip.ErrAborted{}
+			},
 		},
 		{
 			description:           "Error on first frag",
@@ -1396,8 +1404,13 @@ func TestFragmentationErrors(t *testing.T) {
 			transportHeaderLength: 0,
 			allowPackets:          0,
 			outgoingErrors:        3,
-			mockError:             tcpip.ErrAborted,
-			wantError:             tcpip.ErrAborted,
+			mockError:             &tcpip.ErrAborted{},
+			wantError: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrAborted); ok {
+					return nil
+				}
+				return &tcpip.ErrAborted{}
+			},
 		},
 		{
 			description:           "Error on second frag",
@@ -1406,8 +1419,13 @@ func TestFragmentationErrors(t *testing.T) {
 			transportHeaderLength: 0,
 			allowPackets:          1,
 			outgoingErrors:        2,
-			mockError:             tcpip.ErrAborted,
-			wantError:             tcpip.ErrAborted,
+			mockError:             &tcpip.ErrAborted{},
+			wantError: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrAborted); ok {
+					return nil
+				}
+				return &tcpip.ErrAborted{}
+			},
 		},
 		{
 			description:           "Error on first frag MTU smaller than header",
@@ -1416,8 +1434,13 @@ func TestFragmentationErrors(t *testing.T) {
 			payloadSize:           500,
 			allowPackets:          0,
 			outgoingErrors:        4,
-			mockError:             tcpip.ErrAborted,
-			wantError:             tcpip.ErrAborted,
+			mockError:             &tcpip.ErrAborted{},
+			wantError: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrAborted); ok {
+					return nil
+				}
+				return &tcpip.ErrAborted{}
+			},
 		},
 		{
 			description:           "Error when MTU is smaller than IPv4 minimum MTU",
@@ -1427,7 +1450,12 @@ func TestFragmentationErrors(t *testing.T) {
 			allowPackets:          0,
 			outgoingErrors:        1,
 			mockError:             nil,
-			wantError:             tcpip.ErrInvalidEndpointState,
+			wantError: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrInvalidEndpointState); ok {
+					return nil
+				}
+				return &tcpip.ErrInvalidEndpointState{}
+			},
 		},
 	}
 
@@ -1441,8 +1469,12 @@ func TestFragmentationErrors(t *testing.T) {
 				TTL:      ttl,
 				TOS:      stack.DefaultTOS,
 			}, pkt)
-			if err != ft.wantError {
-				t.Errorf("got WritePacket(_, _, _) = %s, want = %s", err, ft.wantError)
+			if fn := ft.wantError; fn != nil {
+				if want := fn(err); want != nil {
+					t.Errorf("got WritePacket(_, _, _) = %s, want = %s", err, want)
+				}
+			} else if err != nil {
+				t.Errorf("got WritePacket(_, _, _) = %s, want = nil", err)
 			}
 			if got := int(r.Stats().IP.PacketsSent.Value()); got != ft.allowPackets {
 				t.Errorf("got r.Stats().IP.PacketsSent.Value() = %d, want = %d", got, ft.allowPackets)
@@ -2475,8 +2507,9 @@ func TestReceiveFragments(t *testing.T) {
 				}
 			}
 
-			if res, err := ep.Read(ioutil.Discard, tcpip.ReadOptions{}); err != tcpip.ErrWouldBlock {
-				t.Fatalf("(last) got Read = (%v, %v), want = (_, %s)", res, err, tcpip.ErrWouldBlock)
+			res, err := ep.Read(ioutil.Discard, tcpip.ReadOptions{})
+			if _, ok := err.(*tcpip.ErrWouldBlock); !ok {
+				t.Fatalf("(last) got Read = (%#v, %v), want = (_, %s)", res, err, &tcpip.ErrWouldBlock{})
 			}
 		})
 	}
@@ -2554,11 +2587,11 @@ func TestWriteStats(t *testing.T) {
 	// Parameterize the tests to run with both WritePacket and WritePackets.
 	writers := []struct {
 		name         string
-		writePackets func(*stack.Route, stack.PacketBufferList) (int, *tcpip.Error)
+		writePackets func(*stack.Route, stack.PacketBufferList) (int, tcpip.Error)
 	}{
 		{
 			name: "WritePacket",
-			writePackets: func(rt *stack.Route, pkts stack.PacketBufferList) (int, *tcpip.Error) {
+			writePackets: func(rt *stack.Route, pkts stack.PacketBufferList) (int, tcpip.Error) {
 				nWritten := 0
 				for pkt := pkts.Front(); pkt != nil; pkt = pkt.Next() {
 					if err := rt.WritePacket(nil, stack.NetworkHeaderParams{}, pkt); err != nil {
@@ -2570,7 +2603,7 @@ func TestWriteStats(t *testing.T) {
 			},
 		}, {
 			name: "WritePackets",
-			writePackets: func(rt *stack.Route, pkts stack.PacketBufferList) (int, *tcpip.Error) {
+			writePackets: func(rt *stack.Route, pkts stack.PacketBufferList) (int, tcpip.Error) {
 				return rt.WritePackets(nil, pkts, stack.NetworkHeaderParams{})
 			},
 		},
@@ -2580,7 +2613,7 @@ func TestWriteStats(t *testing.T) {
 		t.Run(writer.name, func(t *testing.T) {
 			for _, test := range tests {
 				t.Run(test.name, func(t *testing.T) {
-					ep := testutil.NewMockLinkEndpoint(header.IPv4MinimumMTU, tcpip.ErrInvalidEndpointState, test.allowPackets)
+					ep := testutil.NewMockLinkEndpoint(header.IPv4MinimumMTU, &tcpip.ErrInvalidEndpointState{}, test.allowPackets)
 					rt := buildRoute(t, ep)
 
 					var pkts stack.PacketBufferList

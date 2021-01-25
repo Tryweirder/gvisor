@@ -255,7 +255,7 @@ func TestTCPLinkResolutionFailure(t *testing.T) {
 		name             string
 		netProto         tcpip.NetworkProtocolNumber
 		remoteAddr       tcpip.Address
-		expectedWriteErr *tcpip.Error
+		expectedWriteErr func(tcpip.Error) tcpip.Error
 		sockError        tcpip.SockError
 	}{
 		{
@@ -271,12 +271,17 @@ func TestTCPLinkResolutionFailure(t *testing.T) {
 			expectedWriteErr: nil,
 		},
 		{
-			name:             "IPv4 without resolvable remote",
-			netProto:         ipv4.ProtocolNumber,
-			remoteAddr:       ipv4Addr3.AddressWithPrefix.Address,
-			expectedWriteErr: tcpip.ErrNoRoute,
+			name:       "IPv4 without resolvable remote",
+			netProto:   ipv4.ProtocolNumber,
+			remoteAddr: ipv4Addr3.AddressWithPrefix.Address,
+			expectedWriteErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrNoRoute); ok {
+					return nil
+				}
+				return &tcpip.ErrNoRoute{}
+			},
 			sockError: tcpip.SockError{
-				Err:       tcpip.ErrNoRoute,
+				Err:       &tcpip.ErrNoRoute{},
 				ErrType:   byte(header.ICMPv4DstUnreachable),
 				ErrCode:   byte(header.ICMPv4HostUnreachable),
 				ErrOrigin: tcpip.SockExtErrorOriginICMP,
@@ -293,12 +298,17 @@ func TestTCPLinkResolutionFailure(t *testing.T) {
 			},
 		},
 		{
-			name:             "IPv6 without resolvable remote",
-			netProto:         ipv6.ProtocolNumber,
-			remoteAddr:       ipv6Addr3.AddressWithPrefix.Address,
-			expectedWriteErr: tcpip.ErrNoRoute,
+			name:       "IPv6 without resolvable remote",
+			netProto:   ipv6.ProtocolNumber,
+			remoteAddr: ipv6Addr3.AddressWithPrefix.Address,
+			expectedWriteErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrNoRoute); ok {
+					return nil
+				}
+				return &tcpip.ErrNoRoute{}
+			},
 			sockError: tcpip.SockError{
-				Err:       tcpip.ErrNoRoute,
+				Err:       &tcpip.ErrNoRoute{},
 				ErrType:   byte(header.ICMPv6DstUnreachable),
 				ErrCode:   byte(header.ICMPv6AddressUnreachable),
 				ErrOrigin: tcpip.SockExtErrorOriginICMP6,
@@ -355,18 +365,28 @@ func TestTCPLinkResolutionFailure(t *testing.T) {
 
 			remoteAddr := listenerAddr
 			remoteAddr.Addr = test.remoteAddr
-			if err := clientEP.Connect(remoteAddr); err != tcpip.ErrConnectStarted {
-				t.Fatalf("got clientEP.Connect(%#v) = %s, want = %s", remoteAddr, err, tcpip.ErrConnectStarted)
+			{
+				err := clientEP.Connect(remoteAddr)
+				if _, ok := err.(*tcpip.ErrConnectStarted); !ok {
+					t.Fatalf("got clientEP.Connect(%#v) = %s, want = %s", remoteAddr, err, &tcpip.ErrConnectStarted{})
+				}
 			}
 
 			// Wait for an error due to link resolution failing, or the endpoint to be
 			// writable.
 			<-ch
-			var r bytes.Reader
-			r.Reset([]byte{0})
-			var wOpts tcpip.WriteOptions
-			if n, err := clientEP.Write(&r, wOpts); err != test.expectedWriteErr {
-				t.Errorf("got clientEP.Write(_, %#v) = (%d, %s), want = (_, %s)", wOpts, n, err, test.expectedWriteErr)
+			{
+				var r bytes.Reader
+				r.Reset([]byte{0})
+				var wOpts tcpip.WriteOptions
+				n, err := clientEP.Write(&r, wOpts)
+				if fn := test.expectedWriteErr; fn != nil {
+					if want := fn(err); want != nil {
+						t.Errorf("got clientEP.Write(_, %#v) = (%d, %s), want = (_, %s)", wOpts, n, err, want)
+					}
+				} else if err != nil {
+					t.Errorf("got clientEP.Write(_, %#v) = (%d, %s), want = (_, nil)", wOpts, n, err)
+				}
 			}
 
 			if test.expectedWriteErr == nil {
@@ -380,7 +400,7 @@ func TestTCPLinkResolutionFailure(t *testing.T) {
 
 			sockErrCmpOpts := []cmp.Option{
 				cmpopts.IgnoreUnexported(tcpip.SockError{}),
-				cmp.Comparer(func(a, b *tcpip.Error) bool {
+				cmp.Comparer(func(a, b tcpip.Error) bool {
 					// tcpip.Error holds an unexported field but the errors netstack uses
 					// are pre defined so we can simply compare pointers.
 					return a == b
@@ -453,10 +473,11 @@ func TestGetLinkAddress(t *testing.T) {
 					host1Stack, _ := setupStack(t, stackOpts, host1NICID, host2NICID)
 
 					ch := make(chan stack.LinkResolutionResult, 1)
-					if err := host1Stack.GetLinkAddress(host1NICID, test.remoteAddr, "", test.netProto, func(r stack.LinkResolutionResult) {
+					err := host1Stack.GetLinkAddress(host1NICID, test.remoteAddr, "", test.netProto, func(r stack.LinkResolutionResult) {
 						ch <- r
-					}); err != tcpip.ErrWouldBlock {
-						t.Fatalf("got host1Stack.GetLinkAddress(%d, %s, '', %d, _) = %s, want = %s", host1NICID, test.remoteAddr, test.netProto, err, tcpip.ErrWouldBlock)
+					})
+					if _, ok := err.(*tcpip.ErrWouldBlock); !ok {
+						t.Fatalf("got host1Stack.GetLinkAddress(%d, %s, '', %d, _) = %s, want = %s", host1NICID, test.remoteAddr, test.netProto, err, &tcpip.ErrWouldBlock{})
 					}
 					wantRes := stack.LinkResolutionResult{Success: test.expectedOk}
 					if test.expectedOk {
@@ -570,10 +591,11 @@ func TestRouteResolvedFields(t *testing.T) {
 						wantUnresolvedRouteInfo := wantRouteInfo
 						wantUnresolvedRouteInfo.RemoteLinkAddress = ""
 
-						if err := r.ResolvedFields(func(r stack.ResolvedFieldsResult) {
+						err := r.ResolvedFields(func(r stack.ResolvedFieldsResult) {
 							ch <- r
-						}); err != tcpip.ErrWouldBlock {
-							t.Errorf("got r.ResolvedFields(_) = %s, want = %s", err, tcpip.ErrWouldBlock)
+						})
+						if _, ok := err.(*tcpip.ErrWouldBlock); !ok {
+							t.Errorf("got r.ResolvedFields(_) = %s, want = %s", err, &tcpip.ErrWouldBlock{})
 						}
 						if diff := cmp.Diff(stack.ResolvedFieldsResult{RouteInfo: wantRouteInfo, Success: test.expectedSuccess}, <-ch, cmp.AllowUnexported(stack.RouteInfo{})); diff != "" {
 							t.Errorf("route resolve result mismatch (-want +got):\n%s", diff)
@@ -616,7 +638,7 @@ func TestWritePacketsLinkResolution(t *testing.T) {
 		name             string
 		netProto         tcpip.NetworkProtocolNumber
 		remoteAddr       tcpip.Address
-		expectedWriteErr *tcpip.Error
+		expectedWriteErr tcpip.Error
 	}{
 		{
 			name:             "IPv4",
@@ -703,7 +725,7 @@ func TestWritePacketsLinkResolution(t *testing.T) {
 				var rOpts tcpip.ReadOptions
 				res, err := serverEP.Read(&writer, rOpts)
 				if err != nil {
-					if err == tcpip.ErrWouldBlock {
+					if _, ok := err.(*tcpip.ErrWouldBlock); ok {
 						// Should not have anymore bytes to read after we read the sent
 						// number of bytes.
 						if count == len(data) {

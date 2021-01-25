@@ -15,6 +15,10 @@
 package udp
 
 import (
+	"bytes"
+	"encoding/gob"
+	"strings"
+
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
@@ -43,7 +47,11 @@ func (e *endpoint) saveLastError() string {
 		return ""
 	}
 
-	return e.lastError.String()
+	var b bytes.Buffer
+	if err := gob.NewEncoder(&b).Encode(e.lastError); err != nil {
+		panic(err)
+	}
+	return b.String()
 }
 
 // loadLastError is invoked by stateify.
@@ -52,7 +60,11 @@ func (e *endpoint) loadLastError(s string) {
 		return
 	}
 
-	e.lastError = tcpip.StringToError(s)
+	var r strings.Reader
+	r.Reset(s)
+	if err := gob.NewDecoder(&r).Decode(&e.lastError); err != nil {
+		panic(err)
+	}
 }
 
 // beforeSave is invoked by stateify.
@@ -114,7 +126,7 @@ func (e *endpoint) Resume(s *stack.Stack) {
 		netProto = header.IPv6ProtocolNumber
 	}
 
-	var err *tcpip.Error
+	var err tcpip.Error
 	if state == StateConnected {
 		e.route, err = e.stack.FindRoute(e.RegisterNICID, e.ID.LocalAddress, e.ID.RemoteAddress, netProto, e.ops.GetMulticastLoop())
 		if err != nil {
@@ -123,7 +135,7 @@ func (e *endpoint) Resume(s *stack.Stack) {
 	} else if len(e.ID.LocalAddress) != 0 && !e.isBroadcastOrMulticast(e.RegisterNICID, netProto, e.ID.LocalAddress) { // stateBound
 		// A local unicast address is specified, verify that it's valid.
 		if e.stack.CheckLocalAddress(e.RegisterNICID, netProto, e.ID.LocalAddress) == 0 {
-			panic(tcpip.ErrBadLocalAddress)
+			panic(&tcpip.ErrBadLocalAddress{})
 		}
 	}
 

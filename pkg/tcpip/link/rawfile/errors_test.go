@@ -26,28 +26,48 @@ import (
 func TestTranslateErrno(t *testing.T) {
 	for _, test := range []struct {
 		errno      syscall.Errno
-		translated *tcpip.Error
+		translated func(tcpip.Error) tcpip.Error
 	}{
 		{
-			errno:      syscall.Errno(0),
-			translated: tcpip.ErrInvalidEndpointState,
+			errno: syscall.Errno(0),
+			translated: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrInvalidEndpointState); ok {
+					return nil
+				}
+				return &tcpip.ErrInvalidEndpointState{}
+			},
 		},
 		{
-			errno:      syscall.Errno(maxErrno),
-			translated: tcpip.ErrInvalidEndpointState,
+			errno: syscall.Errno(maxErrno),
+			translated: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrInvalidEndpointState); ok {
+					return nil
+				}
+				return &tcpip.ErrInvalidEndpointState{}
+			},
 		},
 		{
-			errno:      syscall.Errno(514),
-			translated: tcpip.ErrInvalidEndpointState,
+			errno: syscall.Errno(514),
+			translated: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrInvalidEndpointState); ok {
+					return nil
+				}
+				return &tcpip.ErrInvalidEndpointState{}
+			},
 		},
 		{
-			errno:      syscall.EEXIST,
-			translated: tcpip.ErrDuplicateAddress,
+			errno: syscall.EEXIST,
+			translated: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrDuplicateAddress); ok {
+					return nil
+				}
+				return &tcpip.ErrDuplicateAddress{}
+			},
 		},
 	} {
 		got := TranslateErrno(test.errno)
-		if got != test.translated {
-			t.Errorf("TranslateErrno(%q) = %q, want %q", test.errno, got, test.translated)
+		if want := test.translated(got); want != nil {
+			t.Errorf("TranslateErrno(%q) = %q, want %q", test.errno, got, want)
 		}
 	}
 }

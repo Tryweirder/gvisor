@@ -299,7 +299,7 @@ func TestScopeForIPv6Address(t *testing.T) {
 		name  string
 		addr  tcpip.Address
 		scope header.IPv6AddressScope
-		err   *tcpip.Error
+		err   func(tcpip.Error) tcpip.Error
 	}{
 		{
 			name:  "Unique Local",
@@ -329,15 +329,24 @@ func TestScopeForIPv6Address(t *testing.T) {
 			name:  "IPv4",
 			addr:  "\x01\x02\x03\x04",
 			scope: header.GlobalScope,
-			err:   tcpip.ErrBadAddress,
+			err: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrBadAddress); ok {
+					return nil
+				}
+				return &tcpip.ErrBadAddress{}
+			},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := header.ScopeForIPv6Address(test.addr)
-			if err != test.err {
-				t.Errorf("got header.IsV6UniqueLocalAddress(%s) = (_, %v), want = (_, %v)", test.addr, err, test.err)
+			if fn := test.err; fn != nil {
+				if want := fn(err); want != nil {
+					t.Errorf("got header.IsV6UniqueLocalAddress(%s) = (_, %s), want = (_, %s)", test.addr, err, want)
+				}
+			} else if err != nil {
+				t.Errorf("got header.IsV6UniqueLocalAddress(%s) = (_, %s), want = (_, nil)", test.addr, err)
 			}
 			if got != test.scope {
 				t.Errorf("got header.IsV6UniqueLocalAddress(%s) = (%d, _), want = (%d, _)", test.addr, got, test.scope)

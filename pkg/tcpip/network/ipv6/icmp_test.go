@@ -78,7 +78,7 @@ func (*stubLinkEndpoint) LinkAddress() tcpip.LinkAddress {
 	return ""
 }
 
-func (*stubLinkEndpoint) WritePacket(stack.RouteInfo, *stack.GSO, tcpip.NetworkProtocolNumber, *stack.PacketBuffer) *tcpip.Error {
+func (*stubLinkEndpoint) WritePacket(stack.RouteInfo, *stack.GSO, tcpip.NetworkProtocolNumber, *stack.PacketBuffer) tcpip.Error {
 	return nil
 }
 
@@ -144,15 +144,15 @@ func (*testInterface) Promiscuous() bool {
 	return false
 }
 
-func (t *testInterface) WritePacket(r *stack.Route, gso *stack.GSO, protocol tcpip.NetworkProtocolNumber, pkt *stack.PacketBuffer) *tcpip.Error {
+func (t *testInterface) WritePacket(r *stack.Route, gso *stack.GSO, protocol tcpip.NetworkProtocolNumber, pkt *stack.PacketBuffer) tcpip.Error {
 	return t.LinkEndpoint.WritePacket(r.Fields(), gso, protocol, pkt)
 }
 
-func (t *testInterface) WritePackets(r *stack.Route, gso *stack.GSO, pkts stack.PacketBufferList, protocol tcpip.NetworkProtocolNumber) (int, *tcpip.Error) {
+func (t *testInterface) WritePackets(r *stack.Route, gso *stack.GSO, pkts stack.PacketBufferList, protocol tcpip.NetworkProtocolNumber) (int, tcpip.Error) {
 	return t.LinkEndpoint.WritePackets(r.Fields(), gso, pkts, protocol)
 }
 
-func (t *testInterface) WritePacketToRemote(remoteLinkAddr tcpip.LinkAddress, gso *stack.GSO, protocol tcpip.NetworkProtocolNumber, pkt *stack.PacketBuffer) *tcpip.Error {
+func (t *testInterface) WritePacketToRemote(remoteLinkAddr tcpip.LinkAddress, gso *stack.GSO, protocol tcpip.NetworkProtocolNumber, pkt *stack.PacketBuffer) tcpip.Error {
 	var r stack.RouteInfo
 	r.NetProto = protocol
 	r.RemoteLinkAddress = remoteLinkAddr
@@ -1282,7 +1282,7 @@ func TestLinkAddressRequest(t *testing.T) {
 		localAddr      tcpip.Address
 		remoteLinkAddr tcpip.LinkAddress
 
-		expectedErr            *tcpip.Error
+		expectedErr            func(tcpip.Error) tcpip.Error
 		expectedRemoteAddr     tcpip.Address
 		expectedRemoteLinkAddr tcpip.LinkAddress
 	}{
@@ -1320,23 +1320,43 @@ func TestLinkAddressRequest(t *testing.T) {
 			name:           "Unicast with unassigned address",
 			localAddr:      lladdr1,
 			remoteLinkAddr: linkAddr1,
-			expectedErr:    tcpip.ErrNetworkUnreachable,
+			expectedErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrNetworkUnreachable); ok {
+					return nil
+				}
+				return &tcpip.ErrNetworkUnreachable{}
+			},
 		},
 		{
 			name:           "Multicast with unassigned address",
 			localAddr:      lladdr1,
 			remoteLinkAddr: "",
-			expectedErr:    tcpip.ErrNetworkUnreachable,
+			expectedErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrNetworkUnreachable); ok {
+					return nil
+				}
+				return &tcpip.ErrNetworkUnreachable{}
+			},
 		},
 		{
 			name:           "Unicast with no local address available",
 			remoteLinkAddr: linkAddr1,
-			expectedErr:    tcpip.ErrNetworkUnreachable,
+			expectedErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrNetworkUnreachable); ok {
+					return nil
+				}
+				return &tcpip.ErrNetworkUnreachable{}
+			},
 		},
 		{
 			name:           "Multicast with no local address available",
 			remoteLinkAddr: "",
-			expectedErr:    tcpip.ErrNetworkUnreachable,
+			expectedErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrNetworkUnreachable); ok {
+					return nil
+				}
+				return &tcpip.ErrNetworkUnreachable{}
+			},
 		},
 	}
 
@@ -1364,8 +1384,13 @@ func TestLinkAddressRequest(t *testing.T) {
 		// ID and link endpoint used by the NIC we created earlier so that we can
 		// mock a link address request and observe the packets sent to the link
 		// endpoint even though the stack uses the real NIC.
-		if err := linkRes.LinkAddressRequest(lladdr0, test.localAddr, test.remoteLinkAddr, &testInterface{LinkEndpoint: linkEP, nicID: nicID}); err != test.expectedErr {
-			t.Errorf("got p.LinkAddressRequest(%s, %s, %s, _) = %s, want = %s", lladdr0, test.localAddr, test.remoteLinkAddr, err, test.expectedErr)
+		err := linkRes.LinkAddressRequest(lladdr0, test.localAddr, test.remoteLinkAddr, &testInterface{LinkEndpoint: linkEP, nicID: nicID})
+		if fn := test.expectedErr; fn != nil {
+			if want := fn(err); want != nil {
+				t.Errorf("got p.LinkAddressRequest(%s, %s, %s, _) = %s, want = %s", lladdr0, test.localAddr, test.remoteLinkAddr, err, want)
+			}
+		} else if err != nil {
+			t.Errorf("got p.LinkAddressRequest(%s, %s, %s, _) = %s, want = nil", lladdr0, test.localAddr, test.remoteLinkAddr, err)
 		}
 
 		if test.expectedErr != nil {

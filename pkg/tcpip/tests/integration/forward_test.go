@@ -229,7 +229,7 @@ func TestForwarding(t *testing.T) {
 	subTests := []struct {
 		name               string
 		proto              tcpip.TransportProtocolNumber
-		expectedConnectErr *tcpip.Error
+		expectedConnectErr func(tcpip.Error) tcpip.Error
 		setupServerSide    func(t *testing.T, ep tcpip.Endpoint, ch <-chan struct{}, clientAddr tcpip.FullAddress) (tcpip.Endpoint, chan struct{})
 		needRemoteAddr     bool
 	}{
@@ -248,9 +248,14 @@ func TestForwarding(t *testing.T) {
 			needRemoteAddr: true,
 		},
 		{
-			name:               "TCP",
-			proto:              tcp.ProtocolNumber,
-			expectedConnectErr: tcpip.ErrConnectStarted,
+			name:  "TCP",
+			proto: tcp.ProtocolNumber,
+			expectedConnectErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrConnectStarted); ok {
+					return nil
+				}
+				return &tcpip.ErrConnectStarted{}
+			},
 			setupServerSide: func(t *testing.T, ep tcpip.Endpoint, ch <-chan struct{}, clientAddr tcpip.FullAddress) (tcpip.Endpoint, chan struct{}) {
 				t.Helper()
 
@@ -260,7 +265,7 @@ func TestForwarding(t *testing.T) {
 				var addr tcpip.FullAddress
 				for {
 					newEP, wq, err := ep.Accept(&addr)
-					if err == tcpip.ErrWouldBlock {
+					if _, ok := err.(*tcpip.ErrWouldBlock); ok {
 						<-ch
 						continue
 					}
@@ -415,8 +420,15 @@ func TestForwarding(t *testing.T) {
 						t.Fatalf("epsAndAddrs.clientEP.Bind(%#v): %s", clientAddr, err)
 					}
 
-					if err := epsAndAddrs.clientEP.Connect(serverAddr); err != subTest.expectedConnectErr {
-						t.Fatalf("got epsAndAddrs.clientEP.Connect(%#v) = %s, want = %s", serverAddr, err, subTest.expectedConnectErr)
+					{
+						err := epsAndAddrs.clientEP.Connect(serverAddr)
+						if fn := subTest.expectedConnectErr; fn != nil {
+							if want := fn(err); want != nil {
+								t.Fatalf("got epsAndAddrs.clientEP.Connect(%#v) = %s, want = %s", serverAddr, err, want)
+							}
+						} else if err != nil {
+							t.Fatalf("got epsAndAddrs.clientEP.Connect(%#v) = %s, want = nil", serverAddr, err)
+						}
 					}
 					if addr, err := epsAndAddrs.clientEP.GetLocalAddress(); err != nil {
 						t.Fatalf("epsAndAddrs.clientEP.GetLocalAddress(): %s", err)

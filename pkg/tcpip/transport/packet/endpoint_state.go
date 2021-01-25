@@ -15,7 +15,10 @@
 package packet
 
 import (
-	"gvisor.dev/gvisor/pkg/tcpip"
+	"bytes"
+	"encoding/gob"
+	"strings"
+
 	"gvisor.dev/gvisor/pkg/tcpip/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
 )
@@ -68,7 +71,7 @@ func (ep *endpoint) afterLoad() {
 
 	// TODO(gvisor.dev/173): Once bind is supported, choose the right NIC.
 	if err := ep.stack.RegisterPacketEndpoint(0, ep.netProto, ep); err != nil {
-		panic(*err)
+		panic(err)
 	}
 }
 
@@ -78,7 +81,11 @@ func (ep *endpoint) saveLastError() string {
 		return ""
 	}
 
-	return ep.lastError.String()
+	var b bytes.Buffer
+	if err := gob.NewEncoder(&b).Encode(ep.lastError); err != nil {
+		panic(err)
+	}
+	return b.String()
 }
 
 // loadLastError is invoked by stateify.
@@ -87,5 +94,9 @@ func (ep *endpoint) loadLastError(s string) {
 		return
 	}
 
-	ep.lastError = tcpip.StringToError(s)
+	var r strings.Reader
+	r.Reset(s)
+	if err := gob.NewDecoder(&r).Decode(&ep.lastError); err != nil {
+		panic(err)
+	}
 }

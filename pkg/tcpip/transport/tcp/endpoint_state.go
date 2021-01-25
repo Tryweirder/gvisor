@@ -15,7 +15,10 @@
 package tcp
 
 import (
+	"bytes"
+	"encoding/gob"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -59,7 +62,7 @@ func (e *endpoint) beforeSave() {
 					Err: fmt.Errorf("endpoint cannot be saved in connected state: local %s:%d, remote %s:%d", e.ID.LocalAddress, e.ID.LocalPort, e.ID.RemoteAddress, e.ID.RemotePort),
 				})
 			}
-			e.resetConnectionLocked(tcpip.ErrConnectionAborted)
+			e.resetConnectionLocked(&tcpip.ErrConnectionAborted{})
 			e.mu.Unlock()
 			e.Close()
 			e.mu.Lock()
@@ -232,7 +235,8 @@ func (e *endpoint) Resume(s *stack.Stack) {
 		// Reset the scoreboard to reinitialize the sack information as
 		// we do not restore SACK information.
 		e.scoreboard.Reset()
-		if err := e.connect(tcpip.FullAddress{NIC: e.boundNICID, Addr: e.connectingAddress, Port: e.ID.RemotePort}, false, e.workerRunning); err != tcpip.ErrConnectStarted {
+		err := e.connect(tcpip.FullAddress{NIC: e.boundNICID, Addr: e.connectingAddress, Port: e.ID.RemotePort}, false, e.workerRunning)
+		if _, ok := err.(*tcpip.ErrConnectStarted); !ok {
 			panic("endpoint connecting failed: " + err.String())
 		}
 		e.mu.Lock()
@@ -269,7 +273,8 @@ func (e *endpoint) Resume(s *stack.Stack) {
 			connectedLoading.Wait()
 			listenLoading.Wait()
 			bind()
-			if err := e.Connect(tcpip.FullAddress{NIC: e.boundNICID, Addr: e.connectingAddress, Port: e.ID.RemotePort}); err != tcpip.ErrConnectStarted {
+			err := e.Connect(tcpip.FullAddress{NIC: e.boundNICID, Addr: e.connectingAddress, Port: e.ID.RemotePort})
+			if _, ok := err.(*tcpip.ErrConnectStarted); !ok {
 				panic("endpoint connecting failed: " + err.String())
 			}
 			connectingLoading.Done()
@@ -302,7 +307,11 @@ func (e *endpoint) saveLastError() string {
 		return ""
 	}
 
-	return e.lastError.String()
+	var b bytes.Buffer
+	if err := gob.NewEncoder(&b).Encode(e.lastError); err != nil {
+		panic(err)
+	}
+	return b.String()
 }
 
 // loadLastError is invoked by stateify.
@@ -311,7 +320,11 @@ func (e *endpoint) loadLastError(s string) {
 		return
 	}
 
-	e.lastError = tcpip.StringToError(s)
+	var r strings.Reader
+	r.Reset(s)
+	if err := gob.NewDecoder(&r).Decode(&e.lastError); err != nil {
+		panic(err)
+	}
 }
 
 // saveRecentTSTime is invoked by stateify.
@@ -330,7 +343,12 @@ func (e *endpoint) saveHardError() string {
 		return ""
 	}
 
-	return e.hardError.String()
+	var b bytes.Buffer
+	if err := gob.NewEncoder(&b).Encode(e.hardError); err != nil {
+		panic(err)
+	}
+
+	return b.String()
 }
 
 // loadHardError is invoked by stateify.
@@ -339,7 +357,11 @@ func (e *endpoint) loadHardError(s string) {
 		return
 	}
 
-	e.hardError = tcpip.StringToError(s)
+	var r strings.Reader
+	r.Reset(s)
+	if err := gob.NewDecoder(&r).Decode(&e.hardError); err != nil {
+		panic(err)
+	}
 }
 
 // saveMeasureTime is invoked by stateify.

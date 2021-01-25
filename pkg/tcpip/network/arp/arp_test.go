@@ -537,7 +537,7 @@ type testInterface struct {
 
 	nicID tcpip.NICID
 
-	writeErr *tcpip.Error
+	writeErr tcpip.Error
 }
 
 func (t *testInterface) ID() tcpip.NICID {
@@ -560,15 +560,15 @@ func (*testInterface) Promiscuous() bool {
 	return false
 }
 
-func (t *testInterface) WritePacket(r *stack.Route, gso *stack.GSO, protocol tcpip.NetworkProtocolNumber, pkt *stack.PacketBuffer) *tcpip.Error {
+func (t *testInterface) WritePacket(r *stack.Route, gso *stack.GSO, protocol tcpip.NetworkProtocolNumber, pkt *stack.PacketBuffer) tcpip.Error {
 	return t.LinkEndpoint.WritePacket(r.Fields(), gso, protocol, pkt)
 }
 
-func (t *testInterface) WritePackets(r *stack.Route, gso *stack.GSO, pkts stack.PacketBufferList, protocol tcpip.NetworkProtocolNumber) (int, *tcpip.Error) {
+func (t *testInterface) WritePackets(r *stack.Route, gso *stack.GSO, pkts stack.PacketBufferList, protocol tcpip.NetworkProtocolNumber) (int, tcpip.Error) {
 	return t.LinkEndpoint.WritePackets(r.Fields(), gso, pkts, protocol)
 }
 
-func (t *testInterface) WritePacketToRemote(remoteLinkAddr tcpip.LinkAddress, gso *stack.GSO, protocol tcpip.NetworkProtocolNumber, pkt *stack.PacketBuffer) *tcpip.Error {
+func (t *testInterface) WritePacketToRemote(remoteLinkAddr tcpip.LinkAddress, gso *stack.GSO, protocol tcpip.NetworkProtocolNumber, pkt *stack.PacketBuffer) tcpip.Error {
 	if t.writeErr != nil {
 		return t.writeErr
 	}
@@ -589,8 +589,8 @@ func TestLinkAddressRequest(t *testing.T) {
 		nicAddr                                         tcpip.Address
 		localAddr                                       tcpip.Address
 		remoteLinkAddr                                  tcpip.LinkAddress
-		linkErr                                         *tcpip.Error
-		expectedErr                                     *tcpip.Error
+		linkErr                                         tcpip.Error
+		expectedErr                                     func(tcpip.Error) tcpip.Error
 		expectedLocalAddr                               tcpip.Address
 		expectedRemoteLinkAddr                          tcpip.LinkAddress
 		expectedRequestsSent                            uint64
@@ -647,58 +647,83 @@ func TestLinkAddressRequest(t *testing.T) {
 			expectedRequestDroppedErrors:                    0,
 		},
 		{
-			name:                                 "Unicast with unassigned address",
-			nicAddr:                              stackAddr,
-			localAddr:                            testAddr,
-			remoteLinkAddr:                       remoteLinkAddr,
-			expectedErr:                          tcpip.ErrBadLocalAddress,
-			expectedRequestsSent:                 0,
-			expectedRequestBadLocalAddressErrors: 1,
+			name:           "Unicast with unassigned address",
+			nicAddr:        stackAddr,
+			localAddr:      testAddr,
+			remoteLinkAddr: remoteLinkAddr,
+			expectedErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrBadLocalAddress); ok {
+					return nil
+				}
+				return &tcpip.ErrBadLocalAddress{}
+			},
+			expectedRequestsSent:                            0,
+			expectedRequestBadLocalAddressErrors:            1,
 			expectedRequestInterfaceHasNoLocalAddressErrors: 0,
 			expectedRequestDroppedErrors:                    0,
 		},
 		{
-			name:                                 "Multicast with unassigned address",
-			nicAddr:                              stackAddr,
-			localAddr:                            testAddr,
-			remoteLinkAddr:                       "",
-			expectedErr:                          tcpip.ErrBadLocalAddress,
-			expectedRequestsSent:                 0,
-			expectedRequestBadLocalAddressErrors: 1,
+			name:           "Multicast with unassigned address",
+			nicAddr:        stackAddr,
+			localAddr:      testAddr,
+			remoteLinkAddr: "",
+			expectedErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrBadLocalAddress); ok {
+					return nil
+				}
+				return &tcpip.ErrBadLocalAddress{}
+			},
+			expectedRequestsSent:                            0,
+			expectedRequestBadLocalAddressErrors:            1,
 			expectedRequestInterfaceHasNoLocalAddressErrors: 0,
 			expectedRequestDroppedErrors:                    0,
 		},
 		{
-			name:                                 "Unicast with no local address available",
-			nicAddr:                              "",
-			localAddr:                            "",
-			remoteLinkAddr:                       remoteLinkAddr,
-			expectedErr:                          tcpip.ErrNetworkUnreachable,
-			expectedRequestsSent:                 0,
-			expectedRequestBadLocalAddressErrors: 0,
+			name:           "Unicast with no local address available",
+			nicAddr:        "",
+			localAddr:      "",
+			remoteLinkAddr: remoteLinkAddr,
+			expectedErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrNetworkUnreachable); ok {
+					return nil
+				}
+				return &tcpip.ErrNetworkUnreachable{}
+			},
+			expectedRequestsSent:                            0,
+			expectedRequestBadLocalAddressErrors:            0,
 			expectedRequestInterfaceHasNoLocalAddressErrors: 1,
 			expectedRequestDroppedErrors:                    0,
 		},
 		{
-			name:                                 "Multicast with no local address available",
-			nicAddr:                              "",
-			localAddr:                            "",
-			remoteLinkAddr:                       "",
-			expectedErr:                          tcpip.ErrNetworkUnreachable,
-			expectedRequestsSent:                 0,
-			expectedRequestBadLocalAddressErrors: 0,
+			name:           "Multicast with no local address available",
+			nicAddr:        "",
+			localAddr:      "",
+			remoteLinkAddr: "",
+			expectedErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrNetworkUnreachable); ok {
+					return nil
+				}
+				return &tcpip.ErrNetworkUnreachable{}
+			},
+			expectedRequestsSent:                            0,
+			expectedRequestBadLocalAddressErrors:            0,
 			expectedRequestInterfaceHasNoLocalAddressErrors: 1,
 			expectedRequestDroppedErrors:                    0,
 		},
 		{
-			name:                                 "Link error",
-			nicAddr:                              stackAddr,
-			localAddr:                            stackAddr,
-			remoteLinkAddr:                       remoteLinkAddr,
-			linkErr:                              tcpip.ErrInvalidEndpointState,
-			expectedErr:                          tcpip.ErrInvalidEndpointState,
-			expectedRequestsSent:                 0,
-			expectedRequestBadLocalAddressErrors: 0,
+			name:           "Link error",
+			nicAddr:        stackAddr,
+			localAddr:      stackAddr,
+			remoteLinkAddr: remoteLinkAddr,
+			linkErr:        &tcpip.ErrInvalidEndpointState{},
+			expectedErr: func(err tcpip.Error) tcpip.Error {
+				if _, ok := err.(*tcpip.ErrInvalidEndpointState); ok {
+					return nil
+				}
+				return &tcpip.ErrInvalidEndpointState{}
+			},
+			expectedRequestsSent:                            0,
+			expectedRequestBadLocalAddressErrors:            0,
 			expectedRequestInterfaceHasNoLocalAddressErrors: 0,
 			expectedRequestDroppedErrors:                    1,
 		},
@@ -732,8 +757,13 @@ func TestLinkAddressRequest(t *testing.T) {
 			// link endpoint even though the stack uses the real NIC to validate the
 			// local address.
 			iface := testInterface{LinkEndpoint: linkEP, nicID: nicID, writeErr: test.linkErr}
-			if err := linkRes.LinkAddressRequest(remoteAddr, test.localAddr, test.remoteLinkAddr, &iface); err != test.expectedErr {
-				t.Fatalf("got p.LinkAddressRequest(%s, %s, %s, _) = %s, want = %s", remoteAddr, test.localAddr, test.remoteLinkAddr, err, test.expectedErr)
+			err := linkRes.LinkAddressRequest(remoteAddr, test.localAddr, test.remoteLinkAddr, &iface)
+			if fn := test.expectedErr; fn != nil {
+				if want := fn(err); want != nil {
+					t.Fatalf("got p.LinkAddressRequest(%s, %s, %s, _) = %s, want = %s", remoteAddr, test.localAddr, test.remoteLinkAddr, err, want)
+				}
+			} else if err != nil {
+				t.Fatalf("got p.LinkAddressRequest(%s, %s, %s, _) = %s, want = nil", remoteAddr, test.localAddr, test.remoteLinkAddr, err)
 			}
 
 			if got := s.Stats().ARP.OutgoingRequestsSent.Value(); got != test.expectedRequestsSent {
@@ -792,7 +822,8 @@ func TestLinkAddressRequestWithoutNIC(t *testing.T) {
 		t.Fatal("expected ARP protocol to implement stack.LinkAddressResolver")
 	}
 
-	if err := linkRes.LinkAddressRequest(remoteAddr, "", remoteLinkAddr, &testInterface{nicID: nicID}); err != tcpip.ErrNotConnected {
-		t.Fatalf("got p.LinkAddressRequest(%s, %s, %s, _) = %s, want = %s", remoteAddr, "", remoteLinkAddr, err, tcpip.ErrNotConnected)
+	err := linkRes.LinkAddressRequest(remoteAddr, "", remoteLinkAddr, &testInterface{nicID: nicID})
+	if _, ok := err.(*tcpip.ErrNotConnected); !ok {
+		t.Fatalf("got p.LinkAddressRequest(%s, %s, %s, _) = %s, want = %s", remoteAddr, "", remoteLinkAddr, err, &tcpip.ErrNotConnected{})
 	}
 }
