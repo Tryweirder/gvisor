@@ -43,6 +43,10 @@ const (
 	// numPktsForRTT is the number of packets sent and acked to establish
 	// RTT.
 	numPktsForRTT = 10
+
+	// fastRecoveryCCState is the congestion control state when TCP enters
+	// fast recovery.
+	fastRecoveryCCState = 3
 )
 
 func createSACKConnection(t *testing.T) (testbench.DUT, testbench.TCPIPv4, int32, int32) {
@@ -217,5 +221,196 @@ func TestRACKTLPWithSACK(t *testing.T) {
 	if diff < pto {
 		t.Fatalf("expected payload was received before the probe timeout, got: %v, want: %v", diff, pto)
 	}
+	closeSACKConnection(t, dut, conn, acceptFd, listenFd)
+}
+
+// TestRACKWithoutReorder tests that without reorder RACK will retransmit the
+// lost packets after reorder timer expires.
+func TestRACKWithoutReorder(t *testing.T) {
+	dut, conn, acceptFd, listenFd := createSACKConnection(t)
+	seqNum1 := *conn.RemoteSeqNum(t)
+
+	// Send ACK for data packets to establish RTT.
+	sendAndReceive(t, dut, conn, numPktsForRTT, acceptFd, true /* sendACK */)
+	seqNum1.UpdateForward(seqnum.Size(numPktsForRTT * payloadSize))
+
+	// We are not sending ACK for these packets.
+	const numPkts = 4
+	sendAndReceive(t, dut, conn, numPkts, acceptFd, false /* sendACK */)
+
+	// SACK for [3,4] packets.
+	sackBlock := make([]byte, 40)
+	start := seqNum1.Add(seqnum.Size(2 * payloadSize))
+	end := start.Add(seqnum.Size(2 * payloadSize))
+	sbOff := 0
+	sbOff += header.EncodeNOP(sackBlock[sbOff:])
+	sbOff += header.EncodeNOP(sackBlock[sbOff:])
+	sbOff += header.EncodeSACKBlocks([]header.SACKBlock{{
+		start, end,
+	}}, sackBlock[sbOff:])
+	time.Sleep(simulatedRTT)
+	conn.Send(t, testbench.TCP{Flags: testbench.Uint8(header.TCPFlagAck), AckNum: testbench.Uint32(uint32(seqNum1)), Options: sackBlock[:sbOff]})
+
+	// RACK marks #1 and #2 packets as lost and retransmits both after
+	// RTT + reorderWindow. The reorderWindow initially will be a small
+	// fraction of RTT.
+	rtt, _ := getRTTAndRTO(t, dut, acceptFd)
+	timeout := 2 * rtt
+	for i, sn := 0, seqNum1; i < 2; i++ {
+		if _, err := conn.Expect(t, testbench.TCP{SeqNum: testbench.Uint32(uint32(sn))}, timeout); err != nil {
+			t.Fatalf("expected payload was not received: %s", err)
+		}
+		sn.UpdateForward(seqnum.Size(payloadSize))
+	}
+	closeSACKConnection(t, dut, conn, acceptFd, listenFd)
+}
+
+// TestRACKWithReorder tests that RACK will retransmit segments when there is
+// reordering in the connection and reorder timer expires.
+func TestRACKWithReorder(t *testing.T) {
+	dut, conn, acceptFd, listenFd := createSACKConnection(t)
+	seqNum1 := *conn.RemoteSeqNum(t)
+
+	// Send ACK for data packets to establish RTT.
+	sendAndReceive(t, dut, conn, numPktsForRTT, acceptFd, true /* sendACK */)
+	seqNum1.UpdateForward(seqnum.Size(numPktsForRTT * payloadSize))
+
+	// We are not sending ACK for these packets.
+	const numPkts = 4
+	sendAndReceive(t, dut, conn, numPkts, acceptFd, false /* sendACK */)
+
+	time.Sleep(simulatedRTT)
+	// Send ACK in reverse order for the connection to detect reorder.
+	sackBlock := make([]byte, 40)
+	sbOff := 0
+	var start seqnum.Value
+	var end seqnum.Value
+	for i := 0; i < numPkts-1; i++ {
+		start = seqNum1.Add(seqnum.Size((numPkts - i - 1) * payloadSize))
+		end = start.Add(seqnum.Size((i + 1) * payloadSize))
+		sbOff = 0
+		sbOff += header.EncodeNOP(sackBlock[sbOff:])
+		sbOff += header.EncodeNOP(sackBlock[sbOff:])
+		sbOff += header.EncodeSACKBlocks([]header.SACKBlock{{
+			start, end,
+		}}, sackBlock[sbOff:])
+		conn.Send(t, testbench.TCP{Flags: testbench.Uint8(header.TCPFlagAck), AckNum: testbench.Uint32(uint32(seqNum1)), Options: sackBlock[:sbOff]})
+		sackBlock = make([]byte, 40)
+	}
+
+	dsackBlock := make([]byte, 40)
+	dbOff := 0
+	start = seqNum1
+	end = start.Add(seqnum.Size(2 * payloadSize))
+	dbOff += header.EncodeNOP(dsackBlock[dbOff:])
+	dbOff += header.EncodeNOP(dsackBlock[dbOff:])
+	dbOff += header.EncodeSACKBlocks([]header.SACKBlock{{
+		start, end,
+	}}, dsackBlock[dbOff:])
+	conn.Send(t, testbench.TCP{Flags: testbench.Uint8(header.TCPFlagAck), AckNum: testbench.Uint32(uint32(seqNum1 + numPkts*payloadSize)), Options: dsackBlock[:dbOff]})
+
+	seqNum1.UpdateForward(seqnum.Size(numPkts * payloadSize))
+	sendTime := time.Now()
+	sendAndReceive(t, dut, conn, numPkts, acceptFd, false /* sendACK */)
+
+	time.Sleep(simulatedRTT)
+	// Send ACK for [2-5] packets.
+	sackBlock1 := make([]byte, 40)
+	sbOff1 := 0
+	start = seqNum1.Add(seqnum.Size(payloadSize))
+	end = start.Add(seqnum.Size(3 * payloadSize))
+	sbOff1 += header.EncodeNOP(sackBlock1[sbOff1:])
+	sbOff1 += header.EncodeNOP(sackBlock1[sbOff1:])
+	sbOff1 += header.EncodeSACKBlocks([]header.SACKBlock{{
+		start, end,
+	}}, sackBlock1[sbOff1:])
+	conn.Send(t, testbench.TCP{Flags: testbench.Uint8(header.TCPFlagAck), AckNum: testbench.Uint32(uint32(seqNum1)), Options: sackBlock1[:sbOff1]})
+
+	// Expect the retransmission of #1 packet after RTT+ReorderWindow.
+	if _, err := conn.Expect(t, testbench.TCP{SeqNum: testbench.Uint32(uint32(seqNum1))}, time.Second); err != nil {
+		t.Fatalf("expected payload was not received: %s", err)
+	}
+	rtt, _ := getRTTAndRTO(t, dut, acceptFd)
+	diff := time.Now().Sub(sendTime)
+	if diff < rtt {
+		t.Fatalf("expected payload was received too sonn, within RTT")
+	}
+
+	closeSACKConnection(t, dut, conn, acceptFd, listenFd)
+}
+
+// TestRACKWithLostRetransmission tests that RACK will not enter RTO when a
+// retransmitted segment is lost and enters fast recovery.
+func TestRACKWithLostRetransmission(t *testing.T) {
+	dut, conn, acceptFd, listenFd := createSACKConnection(t)
+	seqNum1 := *conn.RemoteSeqNum(t)
+
+	// Send ACK for data packets to establish RTT.
+	sendAndReceive(t, dut, conn, numPktsForRTT, acceptFd, true /* sendACK */)
+	seqNum1.UpdateForward(seqnum.Size(numPktsForRTT * payloadSize))
+
+	// We are not sending ACK for these packets.
+	const numPkts = 5
+	sendAndReceive(t, dut, conn, numPkts, acceptFd, false /* sendACK */)
+
+	// SACK for [2-5] packets.
+	sackBlock := make([]byte, 40)
+	start := seqNum1.Add(seqnum.Size(payloadSize))
+	end := start.Add(seqnum.Size(4 * payloadSize))
+	sbOff := 0
+	sbOff += header.EncodeNOP(sackBlock[sbOff:])
+	sbOff += header.EncodeNOP(sackBlock[sbOff:])
+	sbOff += header.EncodeSACKBlocks([]header.SACKBlock{{
+		start, end,
+	}}, sackBlock[sbOff:])
+	time.Sleep(simulatedRTT)
+	conn.Send(t, testbench.TCP{Flags: testbench.Uint8(header.TCPFlagAck), AckNum: testbench.Uint32(uint32(seqNum1)), Options: sackBlock[:sbOff]})
+
+	// RACK marks #1 packet as lost and retransmits it after
+	// RTT + reorderWindow. The reorderWindow is bounded between a small
+	// fraction of RTT and 1 RTT.
+	rtt, _ := getRTTAndRTO(t, dut, acceptFd)
+	timeout := 2 * rtt
+	if _, err := conn.Expect(t, testbench.TCP{SeqNum: testbench.Uint32(uint32(seqNum1))}, timeout); err != nil {
+		t.Fatalf("expected payload was not received: %s", err)
+	}
+
+	// Send #6 packet.
+	payload := make([]byte, payloadSize)
+	dut.Send(t, acceptFd, payload, 0)
+	gotOne, err := conn.Expect(t, testbench.TCP{SeqNum: testbench.Uint32(uint32(seqNum1 + 5*payloadSize))}, time.Second)
+	if err != nil {
+		t.Fatalf("Expect #6: %s", err)
+	}
+	if gotOne == nil {
+		t.Fatalf("#6: expected a packet within a second but got none")
+	}
+
+	// SACK for [2-6] packets.
+	sackBlock1 := make([]byte, 40)
+	start = seqNum1.Add(seqnum.Size(payloadSize))
+	end = start.Add(seqnum.Size(5 * payloadSize))
+	sbOff1 := 0
+	sbOff1 += header.EncodeNOP(sackBlock1[sbOff1:])
+	sbOff1 += header.EncodeNOP(sackBlock1[sbOff1:])
+	sbOff1 += header.EncodeSACKBlocks([]header.SACKBlock{{
+		start, end,
+	}}, sackBlock1[sbOff1:])
+	time.Sleep(simulatedRTT)
+	conn.Send(t, testbench.TCP{Flags: testbench.Uint8(header.TCPFlagAck), AckNum: testbench.Uint32(uint32(seqNum1)), Options: sackBlock1[:sbOff1]})
+
+	// Expect re-retransmission of #1 packet without entering an RTO.
+	if _, err := conn.Expect(t, testbench.TCP{SeqNum: testbench.Uint32(uint32(seqNum1))}, timeout); err != nil {
+		t.Fatalf("expected payload was not received: %s", err)
+	}
+
+	// Check the congestion control state.
+	info := linux.TCPInfo{}
+	ret := dut.GetSockOpt(t, acceptFd, unix.SOL_TCP, unix.TCP_INFO, int32(linux.SizeOfTCPInfo))
+	binary.Unmarshal(ret, usermem.ByteOrder, &info)
+	if info.CaState != fastRecoveryCCState {
+		t.Fatalf("expected connection to be in fast recovery, want: %v got: %v", fastRecoveryCCState, info.CaState)
+	}
+
 	closeSACKConnection(t, dut, conn, acceptFd, listenFd)
 }
