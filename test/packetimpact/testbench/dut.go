@@ -486,6 +486,53 @@ func (dut *DUT) ListenWithErrno(ctx context.Context, t *testing.T, sockfd, backl
 	return resp.GetRet(), syscall.Errno(resp.GetErrno_())
 }
 
+// Poll calls poll on the DUT and causes a fatal test failure if it doesn't
+// succeed. If more control over error handling is needed, use PollWithErrno.
+func (dut *DUT) Poll(t *testing.T, pfds []unix.PollFd, timeout time.Duration) []unix.PollFd {
+	t.Helper()
+
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeout >= 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout+RPCTimeout)
+		defer cancel()
+	}
+	ret, result, err := dut.PollWithErrno(ctx, t, pfds, timeout)
+	if ret < 0 {
+		t.Fatalf("failed to poll: %s", err)
+	}
+	return result
+}
+
+// PollWithErrno calls poll on the DUT.
+func (dut *DUT) PollWithErrno(ctx context.Context, t *testing.T, pfds []unix.PollFd, timeout time.Duration) (int32, []unix.PollFd, error) {
+	t.Helper()
+
+	var protoPfds []*pb.PollFd
+	for _, pfd := range pfds {
+		protoPfds = append(protoPfds, &pb.PollFd{
+			Fd:     pfd.Fd,
+			Events: uint32(pfd.Events),
+		})
+	}
+	req := pb.PollRequest{
+		Pfds:          protoPfds,
+		TimeoutMillis: int32(timeout.Milliseconds()),
+	}
+	resp, err := dut.posixServer.Poll(ctx, &req)
+	if err != nil {
+		t.Fatalf("failed to call Poll: %s", err)
+	}
+	var result []unix.PollFd
+	for _, protoPfd := range resp.Pfds {
+		result = append(result, unix.PollFd{
+			Fd:      protoPfd.GetFd(),
+			Revents: int16(protoPfd.GetEvents()),
+		})
+	}
+	return resp.GetRet(), result, syscall.Errno(resp.GetErrno_())
+}
+
 // Send calls send on the DUT and causes a fatal test failure if it doesn't
 // succeed. If more control over the timeout or error handling is needed, use
 // SendWithErrno.

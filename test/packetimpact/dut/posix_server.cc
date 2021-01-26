@@ -16,6 +16,7 @@
 #include <getopt.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -252,6 +253,32 @@ class PosixImpl final : public posix_server::Posix::Service {
     response->set_ret(listen(request->sockfd(), request->backlog()));
     if (response->ret() < 0) {
       response->set_errno_(errno);
+    }
+    return ::grpc::Status::OK;
+  }
+
+  ::grpc::Status Poll(::grpc::ServerContext *context,
+                      const ::posix_server::PollRequest *request,
+                      ::posix_server::PollResponse *response) override {
+    std::vector<struct pollfd> pfds;
+    for (int i = 0; i < request->pfds_size(); i++) {
+      struct ::pollfd pfd;
+      pfd.fd = request->pfds(i).fd();
+      pfd.events = request->pfds(i).events();
+      pfd.revents = 0;
+      pfds.push_back(pfd);
+    }
+    int ret = ::poll(pfds.data(), pfds.size(), request->timeout_millis());
+
+    response->set_ret(ret);
+    if (ret < 0) {
+      response->set_errno_(errno);
+    } else {
+      for (int i = 0; i < ret; i++) {
+        auto protoPfd = response->add_pfds();
+        protoPfd->set_fd(pfds[i].fd);
+        protoPfd->set_events(pfds[i].revents);
+      }
     }
     return ::grpc::Status::OK;
   }
