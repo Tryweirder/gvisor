@@ -1412,6 +1412,10 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
 		acked := s.sndUna.Size(ack)
 		s.sndUna = ack
 
+		if acked > 0 {
+			s.ep.route.ConfirmReachable()
+		}
+
 		ackLeft := acked
 		originalOutstanding := s.outstanding
 		for ackLeft > 0 {
